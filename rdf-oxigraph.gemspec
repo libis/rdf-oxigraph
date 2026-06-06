@@ -29,6 +29,7 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency "rake", "~> 13.0"
   spec.add_development_dependency "rake-compiler", "~> 1.2"
-  spec.add_development_dependency "rspec", "~> 3.0"
-  spec.add_development_dependency "rdf-spec", "~> 3.3"
+  spec.add_development_dependency "minitest", "~> 5.16"          # main test suite
+  spec.add_development_dependency "rspec", "~> 3.0"              # rdf-spec conformance only
+  spec.add_development_dependency "rdf-spec", "~> 3.3"           # rdf-spec conformance only
 end

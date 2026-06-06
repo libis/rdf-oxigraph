@@ -6,4 +6,6 @@ require_relative "oxigraph/version"
 require "rdf/oxigraph/rdf_oxigraph"
 
 require_relative "oxigraph/conversion"
+require_relative "oxigraph/format"
+require_relative "oxigraph/sparql"
 require_relative "oxigraph/repository"

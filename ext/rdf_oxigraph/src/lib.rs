@@ -16,7 +16,7 @@
 //!   - CONSTRUCT/DESCRIBE: `["graph", [[s,p,o], ...]]`
 
 use magnus::{function, method, prelude::*, value::ReprValue, Error, RArray, Ruby, TryConvert, Value};
-use oxigraph::io::RdfFormat;
+use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, Quad, Subject, Term};
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store as OxiStore;
@@ -134,6 +134,61 @@ fn graph_to_ruby(ruby: &Ruby, g: &GraphName) -> Result<Value, Error> {
     }
 }
 
+fn parse_format(format: &str) -> Result<RdfFormat, Error> {
+    Ok(match format {
+        "turtle" | "ttl" => RdfFormat::Turtle,
+        "ntriples" | "nt" => RdfFormat::NTriples,
+        "nquads" | "nq" => RdfFormat::NQuads,
+        "trig" => RdfFormat::TriG,
+        "rdfxml" | "rdf" => RdfFormat::RdfXml,
+        other => return Err(err(format!("unknown RDF format {other:?}"))),
+    })
+}
+
+fn quad_to_ruby(ruby: &Ruby, quad: &Quad) -> Result<RArray, Error> {
+    let row = ruby.ary_new();
+    row.push(term_to_ruby(ruby, &subject_to_term(&quad.subject)?)?)?;
+    row.push(term_to_ruby(ruby, &Term::NamedNode(quad.predicate.clone()))?)?;
+    row.push(term_to_ruby(ruby, &quad.object)?)?;
+    row.push(graph_to_ruby(ruby, &quad.graph_name)?)?;
+    Ok(row)
+}
+
+fn ruby_to_quad(val: Value) -> Result<Quad, Error> {
+    let ruby = Ruby::get().map_err(err)?;
+    let arr = RArray::try_convert(val)?;
+    Ok(Quad::new(
+        ruby_to_subject(arr.entry(0)?)?,
+        ruby_to_named(arr.entry(1)?)?,
+        ruby_to_term(arr.entry(2)?)?,
+        ruby_to_graph(&ruby, arr.entry(3)?)?,
+    ))
+}
+
+// ---------- standalone parse / serialize (no store) ----------
+
+// Parse `data` (a string in `format`) into an Array of [s, p, o, g] tagged tuples.
+fn parse(data: String, format: String) -> Result<RArray, Error> {
+    let ruby = Ruby::get().map_err(err)?;
+    let fmt = parse_format(&format)?;
+    let out = ruby.ary_new();
+    for quad in RdfParser::from_format(fmt).for_reader(data.as_bytes()) {
+        out.push(quad_to_ruby(&ruby, &quad.map_err(err)?)?)?;
+    }
+    Ok(out)
+}
+
+// Serialize an Array of [s, p, o, g] tagged tuples to a string in `format`.
+fn serialize(quads: RArray, format: String) -> Result<String, Error> {
+    let fmt = parse_format(&format)?;
+    let mut ser = RdfSerializer::from_format(fmt).for_writer(Vec::<u8>::new());
+    for i in 0..quads.len() {
+        let quad = ruby_to_quad(quads.entry(i as isize)?)?;
+        ser.serialize_quad(&quad).map_err(err)?;
+    }
+    String::from_utf8(ser.finish().map_err(err)?).map_err(err)
+}
+
 // ---------- Store ----------
 
 #[magnus::wrap(class = "RDF::Oxigraph::Store", free_immediately, size)]
@@ -171,31 +226,33 @@ impl Store {
     }
 
     fn load(&self, data: String, format: String) -> Result<(), Error> {
-        let fmt = match format.as_str() {
-            "turtle" | "ttl" => RdfFormat::Turtle,
-            "ntriples" | "nt" => RdfFormat::NTriples,
-            "nquads" | "nq" => RdfFormat::NQuads,
-            "trig" => RdfFormat::TriG,
-            "rdfxml" | "rdf" => RdfFormat::RdfXml,
-            other => return Err(err(format!("unknown RDF format {other:?}"))),
-        };
-        self.0.load_from_reader(fmt, data.as_bytes()).map_err(err)?;
+        self.0
+            .load_from_reader(parse_format(&format)?, data.as_bytes())
+            .map_err(err)?;
         Ok(())
+    }
+
+    // Serialize the entire store to a string in `format`.
+    fn dump(&self, format: String) -> Result<String, Error> {
+        let mut ser = RdfSerializer::from_format(parse_format(&format)?).for_writer(Vec::<u8>::new());
+        for quad in self.0.iter() {
+            ser.serialize_quad(&quad.map_err(err)?).map_err(err)?;
+        }
+        String::from_utf8(ser.finish().map_err(err)?).map_err(err)
     }
 
     fn each_quad(&self) -> Result<RArray, Error> {
         let ruby = Ruby::get().map_err(err)?;
         let out = ruby.ary_new();
         for quad in self.0.iter() {
-            let quad = quad.map_err(err)?;
-            let row = ruby.ary_new();
-            row.push(term_to_ruby(&ruby, &subject_to_term(&quad.subject)?)?)?;
-            row.push(term_to_ruby(&ruby, &Term::NamedNode(quad.predicate.clone()))?)?;
-            row.push(term_to_ruby(&ruby, &quad.object)?)?;
-            row.push(graph_to_ruby(&ruby, &quad.graph_name)?)?;
-            out.push(row)?;
+            out.push(quad_to_ruby(&ruby, &quad.map_err(err)?)?)?;
         }
         Ok(out)
+    }
+
+    // Execute a SPARQL 1.1 Update (INSERT DATA / DELETE DATA / DELETE/INSERT WHERE / LOAD / ...).
+    fn update(&self, update: String) -> Result<(), Error> {
+        self.0.update(update.as_str()).map_err(err)
     }
 
     fn query(&self, sparql: String) -> Result<RArray, Error> {
@@ -255,13 +312,19 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     let rdf = ruby.define_module("RDF")?;
     let oxigraph = rdf.define_module("Oxigraph")?;
 
+    // Standalone, store-free format I/O over the tagged-tuple wire format.
+    oxigraph.define_singleton_method("parse", function!(parse, 2))?;
+    oxigraph.define_singleton_method("serialize", function!(serialize, 2))?;
+
     let store = oxigraph.define_class("Store", ruby.class_object())?;
     store.define_singleton_method("new", function!(Store::new, 0))?;
     store.define_method("insert", method!(Store::insert, 4))?;
     store.define_method("delete", method!(Store::delete, 4))?;
     store.define_method("size", method!(Store::size, 0))?;
     store.define_method("load", method!(Store::load, 2))?;
+    store.define_method("dump", method!(Store::dump, 1))?;
     store.define_method("each_quad", method!(Store::each_quad, 0))?;
     store.define_method("query", method!(Store::query, 1))?;
+    store.define_method("update", method!(Store::update, 1))?;
     Ok(())
 }

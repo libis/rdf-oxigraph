@@ -49,6 +49,38 @@ module RDF
         s, p, o, g = Conversion.serialize_statement(statement)
         @store.delete(s, p, o, g)
       end
+
+      # Fast bulk load via oxigraph's native parser (skips per-statement Ruby
+      # inserts). Falls back to RDF::Mutable#load for unsupported formats or when
+      # a graph_name override is requested.
+      def load(filename, **options)
+        format = options[:format] || RDF::Format.for(file_name: filename.to_s)&.to_sym
+        native = RDF::Oxigraph::FORMATS[format]
+        return super if native.nil? || options[:graph_name]
+        @store.load(File.read(filename), native)
+        self
+      end
+
+      # Fast native serialization of the whole repository for supported formats;
+      # falls back to RDF::Enumerable#dump otherwise.
+      def dump(format, **options)
+        native = format.is_a?(Symbol) && RDF::Oxigraph::FORMATS[format]
+        return super if native == false || native.nil?
+        @store.dump(native)
+      end
+
+      # Execute a SPARQL query string via oxigraph's native engine. Returns
+      # RDF.rb-native results: RDF::Query::Solutions (SELECT), RDF::Graph
+      # (CONSTRUCT/DESCRIBE), or true/false (ASK).
+      def sparql(query_string)
+        RDF::Oxigraph::SPARQL.results(@store.query(query_string))
+      end
+
+      # Execute a SPARQL 1.1 Update string against this repository.
+      def sparql_update(update_string)
+        @store.update(update_string)
+        self
+      end
     end
   end
 end

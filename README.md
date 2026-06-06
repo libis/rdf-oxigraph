@@ -20,17 +20,35 @@ Roadmap (backend chosen after an oxirs spike was ruled out — see plan):
 2. ✅ Term marshalling (RDF.rb terms ↔ oxigraph) + a `Store` class
    (`new`/`insert`/`delete`/`size`/`load`/`each_quad`/`query`).
 3. ✅ `RDF::Repository` drop-in — **319/338 `rdf-spec` examples pass** (see Conformance).
-4. `RDF::Reader`/`RDF::Writer` (Turtle/TriG/N-Triples/N-Quads).
-5. `SPARQL::Client`-compatible facade (oxigraph supports PREFIX + full FILTER natively).
+4. ✅ `RDF::Reader`/`RDF::Writer`/`RDF::Format` for Turtle/TriG/N-Triples/N-Quads
+   (native oxigraph parse/serialize) + fast `Repository#load`/`#dump`.
+5. ✅ SPARQL query + update — `Repository#sparql` (→ `RDF::Query::Solutions` / `RDF::Graph` /
+   boolean), `Repository#sparql_update`, and an `RDF::Oxigraph::SPARQL::Client` wrapper
+   (string-based `query`/`update`). Full FILTER/REGEX/PREFIX, native engine.
 6. Packaging: precompiled cross-platform gems.
 7. solis-core integration (`'oxigraph'` store type).
 
 SHACL is not provided by oxigraph; solis keeps its external validator (optionally add `rudof` later).
 
+## Tests
+
+Two suites:
+
+- **Minitest** — the main suite (consistent with solis-core):
+  ```bash
+  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake test
+  ```
+- **RSpec** — runs only the `rdf-spec` conformance shared examples (which are RSpec-only):
+  ```bash
+  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake conformance
+  ```
+
+`rake test` is the default and is green; `rake conformance` has ~19 expected failures (below).
+
 ## Conformance & known deviations
 
-`RDF::Oxigraph::Repository` passes **319/338** of the `rdf-spec` `RDF::Repository`
-shared examples (`bundle exec rspec`). The remaining ~19 failures stem from a single,
+`RDF::Oxigraph::Repository` passes **319/338** of the official `rdf-spec` `RDF::Repository`
+shared examples (`rake conformance`). The remaining ~19 failures stem from a single,
 documented backend behavior:
 
 - **oxigraph canonicalizes typed literals.** `"01"^^xsd:integer` is stored as
