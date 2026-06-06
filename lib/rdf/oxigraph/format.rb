@@ -6,7 +6,8 @@ module RDF
       ntriples: "ntriples",
       nquads:   "nquads",
       trig:     "trig",
-      rdfxml:   "rdfxml"
+      rdfxml:   "rdfxml",
+      jsonld:   "jsonld"
     }.freeze
 
     # Map an RDF.rb format symbol (or content type / file name) to the native
@@ -103,6 +104,14 @@ module RDF
       content_type "application/trig", extension: :trig
       reader { TriGReader }
       writer { TriGWriter }
+    end
+
+    class JsonLdReader < Reader; oxigraph_format "jsonld"; end
+    class JsonLdWriter < Writer; oxigraph_format "jsonld"; end
+    class JsonLd < RDF::Format
+      content_type "application/ld+json", extension: :jsonld
+      reader { JsonLdReader }
+      writer { JsonLdWriter }
     end
   end
 end

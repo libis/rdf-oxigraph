@@ -16,7 +16,7 @@
 //!   - CONSTRUCT/DESCRIBE: `["graph", [[s,p,o], ...]]`
 
 use magnus::{function, method, prelude::*, value::ReprValue, Error, RArray, Ruby, TryConvert, Value};
-use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
+use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, Quad, Subject, Term};
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store as OxiStore;
@@ -141,6 +141,9 @@ fn parse_format(format: &str) -> Result<RdfFormat, Error> {
         "nquads" | "nq" => RdfFormat::NQuads,
         "trig" => RdfFormat::TriG,
         "rdfxml" | "rdf" => RdfFormat::RdfXml,
+        "jsonld" | "json" => RdfFormat::JsonLd {
+            profile: JsonLdProfileSet::empty(),
+        },
         other => return Err(err(format!("unknown RDF format {other:?}"))),
     })
 }

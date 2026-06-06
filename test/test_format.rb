@@ -53,6 +53,30 @@ class TestFormat < Minitest::Test
     assert_includes dump, '"hi"@en'
   end
 
+  def test_jsonld_serialize_and_parse_round_trip
+    quads = RDF::Oxigraph.parse(TTL, "turtle") # 2 triples
+    jsonld = RDF::Oxigraph.serialize(quads, "jsonld")
+    puts ::JSON.pretty_generate(JSON.parse(jsonld))
+    assert_includes jsonld, "#{EX}p"
+    assert_equal 2, RDF::Oxigraph.parse(jsonld, "jsonld").size
+  end
+
+  def test_jsonld_writer_and_dump
+    repo = RDF::Oxigraph::Repository.new
+    repo << RDF::Statement.new(RDF::URI(EX + "a"), RDF::URI(EX + "p"), RDF::URI(EX + "b"))
+    assert_includes repo.dump(:jsonld), "#{EX}b"
+
+    graph = RDF::Graph.new
+    graph << RDF::Statement.new(RDF::URI(EX + "a"), RDF::URI(EX + "n"), RDF::Literal.new("hi"))
+    out = RDF::Oxigraph::JsonLdWriter.buffer { |w| graph.each_statement { |s| w << s } }
+    assert_includes out, "hi"
+  end
+
+  def test_jsonld_format_registered
+    assert_includes RDF::Oxigraph::JsonLd.content_type, "application/ld+json"
+    assert_equal RDF::Oxigraph::JsonLdReader, RDF::Reader.for(content_type: "application/ld+json")
+  end
+
   def test_nquads_round_trip_preserves_graph
     quads = [
       [["uri", EX + "a"], ["uri", EX + "p"], ["uri", EX + "b"], ["uri", EX + "g"]]
