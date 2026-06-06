@@ -1,0 +1,11 @@
+/target/
+/tmp/
+*.bundle
+*.so
+*.dylib
+/lib/rdf/oxigraph/rdf_oxigraph.*
+/pkg/
+/.bundle/
+Gemfile.lock
+.idea
+.claude
