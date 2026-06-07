@@ -81,6 +81,17 @@ module RDF
         @store.update(update_string)
         self
       end
+
+      # Validate this repository's data against SHACL `shapes` (a serialized-RDF
+      # string). Returns an RDF::Oxigraph::SHACL::Report.
+      def shacl_validate(shapes, shapes_format: :turtle)
+        RDF::Oxigraph::SHACL.validate(
+          data: @store.dump("ntriples"),
+          data_format: :ntriples,
+          shapes: shapes,
+          shapes_format: shapes_format
+        )
+      end
     end
   end
 end

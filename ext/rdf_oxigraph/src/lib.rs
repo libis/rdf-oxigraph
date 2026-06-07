@@ -15,11 +15,22 @@
 //!   - SELECT:             `["solutions", ["v1","v2",...], [[term|nil, ...], ...]]`
 //!   - CONSTRUCT/DESCRIBE: `["graph", [[s,p,o], ...]]`
 
-use magnus::{function, method, prelude::*, value::ReprValue, Error, RArray, Ruby, TryConvert, Value};
+use magnus::{
+    function, method, prelude::*, value::ReprValue, Error, RArray, RHash, Ruby, TryConvert, Value,
+};
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, Quad, Subject, Term};
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store as OxiStore;
+
+// In-process SHACL via the rudof `shacl` crate. It uses its own RDF stack
+// (rudof_rdf, also on oxigraph 0.5); we only pass serialized strings across.
+use rudof_rdf::rdf_core::RDFFormat as RudofFormat;
+use rudof_rdf::rdf_impl::{OxigraphInMemory, ReaderMode};
+use shacl::validator::processor::{GraphValidation, ShaclProcessor};
+use shacl::validator::store::{Graph as ShaclGraph, ShaclDataManager};
+use shacl::validator::ShaclValidationMode;
+use std::io::Cursor;
 
 fn err<E: std::fmt::Display>(e: E) -> Error {
     Error::new(magnus::exception::runtime_error(), e.to_string())
@@ -192,6 +203,83 @@ fn serialize(quads: RArray, format: String) -> Result<String, Error> {
     String::from_utf8(ser.finish().map_err(err)?).map_err(err)
 }
 
+// ---------- SHACL validation ----------
+
+fn rudof_format(format: &str) -> Result<RudofFormat, Error> {
+    Ok(match format {
+        "turtle" | "ttl" => RudofFormat::Turtle,
+        "ntriples" | "nt" => RudofFormat::NTriples,
+        "nquads" | "nq" => RudofFormat::NQuads,
+        "trig" => RudofFormat::TriG,
+        "rdfxml" | "rdf" => RudofFormat::Rdfxml,
+        "n3" => RudofFormat::N3,
+        other => return Err(err(format!("unknown RDF format {other:?}"))),
+    })
+}
+
+// Validate `data` against SHACL `shapes` (both serialized RDF strings). Returns a Ruby Hash:
+//   { "conforms" => bool, "violations" => n,
+//     "results" => [ { focus, path, value, source, severity, message } ],
+//     "text" => "<human-readable report>" }
+fn shacl_validate(
+    data: String,
+    data_format: String,
+    shapes: String,
+    shapes_format: String,
+) -> Result<RHash, Error> {
+    let ruby = Ruby::get().map_err(err)?;
+
+    let schema = ShaclDataManager::load(
+        &mut Cursor::new(shapes),
+        "shapes",
+        &rudof_format(&shapes_format)?,
+        None,
+    )
+    .map_err(err)?;
+
+    let data_graph = OxigraphInMemory::from_reader(
+        &mut Cursor::new(data),
+        "data",
+        &rudof_format(&data_format)?,
+        None,
+        &ReaderMode::default(),
+    )
+    .map_err(err)?;
+
+    let graph = ShaclGraph::try_from(data_graph).map_err(err)?;
+    let mut validator = GraphValidation::new(graph);
+    let report = validator
+        .validate(&schema, &ShaclValidationMode::Native)
+        .map_err(err)?;
+
+    let results = ruby.ary_new();
+    for r in report.results() {
+        let h = ruby.hash_new();
+        h.aset("focus", r.focus_node().to_string())?;
+        h.aset("severity", format!("{}", r.severity()))?; // Severity: Display
+        // Extract just the message text(s) from the MessageMap (its Display wraps them).
+        let message = r
+            .message()
+            .messages()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        h.aset("message", message)?;
+        h.aset("path", r.path().map(|p| format!("{p:?}")))?; // SHACLPath: no Display, use Debug
+        h.aset("value", r.value().map(|v| v.to_string()))?;
+        h.aset("source", r.source().map(|s| s.to_string()))?;
+        results.push(h)?;
+    }
+
+    let out = ruby.hash_new();
+    out.aset("conforms", report.conforms())?;
+    out.aset("violations", report.results().len())?;
+    out.aset("results", results)?;
+    out.aset("text", format!("{report}"))?;
+    Ok(out)
+}
+
 // ---------- Store ----------
 
 #[magnus::wrap(class = "RDF::Oxigraph::Store", free_immediately, size)]
@@ -210,7 +298,10 @@ impl Store {
             ruby_to_term(o)?,
             ruby_to_graph(&ruby, g)?,
         );
-        self.0.insert(&quad).map_err(err)
+        // oxigraph 0.5's insert returns (); recompute "was it new?" for our Ruby API.
+        let existed = self.0.contains(&quad).map_err(err)?;
+        self.0.insert(&quad).map_err(err)?;
+        Ok(!existed)
     }
 
     fn delete(&self, s: Value, p: Value, o: Value, g: Value) -> Result<bool, Error> {
@@ -221,7 +312,10 @@ impl Store {
             ruby_to_term(o)?,
             ruby_to_graph(&ruby, g)?,
         );
-        self.0.remove(&quad).map_err(err)
+        // oxigraph 0.5's remove returns (); recompute "did it exist?" for our Ruby API.
+        let existed = self.0.contains(&quad).map_err(err)?;
+        self.0.remove(&quad).map_err(err)?;
+        Ok(existed)
     }
 
     fn size(&self) -> Result<usize, Error> {
@@ -318,6 +412,9 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     // Standalone, store-free format I/O over the tagged-tuple wire format.
     oxigraph.define_singleton_method("parse", function!(parse, 2))?;
     oxigraph.define_singleton_method("serialize", function!(serialize, 2))?;
+
+    // SHACL validation (data, data_format, shapes, shapes_format) -> report Hash.
+    oxigraph.define_singleton_method("shacl_validate", function!(shacl_validate, 4))?;
 
     let store = oxigraph.define_class("Store", ruby.class_object())?;
     store.define_singleton_method("new", function!(Store::new, 0))?;

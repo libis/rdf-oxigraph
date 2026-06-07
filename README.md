@@ -25,15 +25,25 @@ Roadmap (backend chosen after an oxirs spike was ruled out — see plan):
 5. ✅ SPARQL query + update — `Repository#sparql` (→ `RDF::Query::Solutions` / `RDF::Graph` /
    boolean), `Repository#sparql_update`, and an `RDF::Oxigraph::SPARQL::Client` wrapper
    (string-based `query`/`update`). Full FILTER/REGEX/PREFIX, native engine.
-6. Packaging: precompiled cross-platform gems.
-7. solis-core integration (`'oxigraph'` store type).
+6. ✅ In-process SHACL validation (via the rudof `shacl` crate).
+7. ✅ Packaging: precompiled cross-platform gems.
+8. solis-core integration (`'oxigraph'` store type).
 
-**SHACL:** not provided by oxigraph. In-process SHACL via the rudof `shacl_validation`
-crate was attempted but **deferred** — `shacl_validation 0.2.12` is not cleanly buildable
-from crates.io: its transitive dependencies mix the pre-/post-rename `iri_s` (0.2.9) and
-`rudof_iri` (0.2.20) crates (two incompatible `IriS` types), an upstream semver
-inconsistency no version pinning resolves. SHACL therefore stays **external** (e.g. a
-SHACL HTTP service or the `shacl` gem) until rudof publishes a coherent release.
+## SHACL validation
+
+oxigraph itself has no SHACL, so validation is provided in-process by the rudof
+[`shacl`](https://crates.io/crates/shacl) crate (native, no external service):
+
+```ruby
+report = repo.shacl_validate(shapes_turtle_string)   # validate the repo's data
+report.conforms?   # => true / false
+report.violations  # => count
+report.results     # => [{ "focus" => ..., "severity" => ..., "message" => ..., "path" => ... }, ...]
+puts report.to_s   # human-readable report
+
+# or validate two strings directly:
+RDF::Oxigraph::SHACL.validate(data: data_ttl, shapes: shapes_ttl)
+```
 
 ## Tests
 

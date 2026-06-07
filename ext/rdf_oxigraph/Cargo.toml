@@ -14,10 +14,13 @@ magnus = "0.7"
 # `Store::open()`, so this is no functional loss — and it makes cross-compiling
 # precompiled gems (esp. Linux x86_64/arm64, incl. musl) reliable and the gems
 # much smaller. Re-enable `rocksdb` here if on-disk persistence is ever needed.
-oxigraph = { version = "0.4", default-features = false }
+oxigraph = { version = "0.5", default-features = false }
 
-# NOTE: in-process SHACL via the rudof `shacl_validation` crate was attempted but
-# deferred — shacl_validation 0.2.12 is not cleanly buildable from crates.io (its
-# transitive deps mix the pre/post-rename `iri_s`/`rudof_iri` crates, an upstream
-# semver inconsistency). SHACL stays external for now (see README). Revisit when
-# rudof publishes a coherent release.
+# NOTE: in-process SHACL is available via the rudof `shacl` crate (0.3.x, crates.io),
+# which itself uses oxigraph 0.5 — so staying on 0.5 here means a single shared
+# oxigraph copy.
+
+# In-process SHACL validation (rudof project). Uses its own RDF stack internally;
+# we cross the boundary only with serialized strings.
+shacl = "0.3"
+rudof_rdf = "0.3"
