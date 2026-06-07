@@ -1,0 +1,21 @@
+@prefix ex: <http://example.org/> .
+@prefix dc: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:book1 a ex:Book ;
+    dc:title "SPARQL in Action" ;
+    ex:year 2018 ;
+    ex:author ex:alice .
+
+ex:book2 a ex:Book ;
+    dc:title "Linked Data Patterns" ;
+    ex:year 2011 ;
+    ex:author ex:bob .
+
+ex:book3 a ex:Book ;
+    dc:title "RDF 1.1 Primer" ;
+    ex:year 2014 ;
+    ex:author ex:alice .
+
+ex:alice a ex:Author ; ex:name "Alice"@en .
+ex:bob   a ex:Author ; ex:name "Bob"@en .
