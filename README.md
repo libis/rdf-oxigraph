@@ -1,64 +1,225 @@
 # rdf-oxigraph
 
-A Ruby gem providing a drop-in **RDF.rb-compatible** storage + SPARQL backend powered by the
+A Ruby gem providing a **drop-in [RDF.rb](https://github.com/ruby-rdf/rdf)-compatible**
+storage + SPARQL backend powered by the
 [oxigraph](https://github.com/oxigraph/oxigraph) Rust engine, via a
 [magnus](https://github.com/matsadler/magnus) + [rb-sys](https://github.com/oxidize-rb/rb-sys)
 native extension.
 
-Goal: let existing RDF.rb / `SPARQL::Client` consumers (e.g. solis-core) run on a fast,
-embedded, native SPARQL 1.1 engine without changing their code.
+## Why
 
-## Status
+`RDF::Repository` ships with rdf.rb as a pure-Ruby, in-memory store, and SPARQL on top of
+it (the `sparql` gem) is a pure-Ruby query engine. That's portable but slow, and SPARQL 1.1
+coverage is uneven.
 
-Early development. Phase 1 (native bridge proof-of-life) **works**: Ruby → Rust(magnus) →
-oxigraph, loading Turtle and executing SPARQL (SELECT/ASK/CONSTRUCT, FILTER incl. REGEX,
-PREFIX) end-to-end. See the full plan/roadmap in
-`~/.claude/plans/lets-brainstorm-what-would-cheerful-corbato.md`.
+**rdf-oxigraph is a drop-in replacement for that backend.** It swaps the pure-Ruby store and
+query engine for oxigraph — a fast, embedded, native **SPARQL 1.1** engine written in Rust —
+while keeping the exact RDF.rb surface your code already uses. Existing rdf.rb /
+`SPARQL::Client` consumers get the native engine **without changing their
+code**: the only edit is which `Repository` class you instantiate.
 
-Roadmap (backend chosen after an oxirs spike was ruled out — see plan):
-1. ✅ Native bridge proof-of-life (`RDF::Oxigraph.probe`).
-2. ✅ Term marshalling (RDF.rb terms ↔ oxigraph) + a `Store` class
-   (`new`/`insert`/`delete`/`size`/`load`/`each_quad`/`query`).
-3. ✅ `RDF::Repository` drop-in — **319/338 `rdf-spec` examples pass** (see Conformance).
-4. ✅ `RDF::Reader`/`RDF::Writer`/`RDF::Format` for Turtle/TriG/N-Triples/N-Quads/JSON-LD
-   (native oxigraph parse/serialize) + fast `Repository#load`/`#dump`.
-5. ✅ SPARQL query + update — `Repository#sparql` (→ `RDF::Query::Solutions` / `RDF::Graph` /
-   boolean), `Repository#sparql_update`, and an `RDF::Oxigraph::SPARQL::Client` wrapper
-   (string-based `query`/`update`). Full FILTER/REGEX/PREFIX, native engine.
-6. ✅ In-process SHACL validation (via the rudof `shacl` crate).
-7. ✅ Packaging: precompiled cross-platform gems.
-8. solis-core integration (`'oxigraph'` store type).
+What you get over the stock backend:
 
-## SHACL validation
+- Native SPARQL 1.1 **query + update** (SELECT/ASK/CONSTRUCT/DESCRIBE, full FILTER/REGEX/PREFIX).
+- Native, fast **parse/serialize** for Turtle, TriG, N-Triples, N-Quads, RDF/XML, JSON-LD.
+- In-process **SHACL validation** (oxigraph has none; provided via the rudof `shacl` crate).
+- **Precompiled gems** — no Rust toolchain needed to install on the common platforms.
 
-oxigraph itself has no SHACL, so validation is provided in-process by the rudof
+## Installation
+
+Add to your `Gemfile`:
+
+```ruby
+gem "rdf-oxigraph"
+```
+
+or:
+
+```bash
+gem install rdf-oxigraph
+```
+
+Precompiled, platform-specific gems are published, so **no Rust toolchain is required to
+install** on:
+
+| Platform | Targets |
+|----------|---------|
+| Linux (glibc) | `x86_64-linux`, `aarch64-linux` |
+| Linux (musl, Alpine, …) | `x86_64-linux-musl`, `aarch64-linux-musl` |
+| macOS | `arm64-darwin` (Apple Silicon), `x86_64-darwin` (Intel) |
+
+If no precompiled gem matches your platform, the gem falls back to **compiling from source**,
+which requires a Rust toolchain (rustup recommended), Ruby headers, and clang/libclang.
+
+> The extension uses oxigraph's **in-memory** store only (oxigraph built with
+> `default-features = false`, no RocksDB / no C++). This keeps the gem small (~2.5 MB) and the
+> Linux glibc/musl cross-builds reliable. On-disk persistence (`Store::open`) is intentionally
+> not enabled — re-enable oxigraph's `rocksdb` feature in `ext/rdf_oxigraph/Cargo.toml` if you
+> need it.
+
+## Architecture — how it fits into rdf.rb
+
+rdf.rb defines the *interface* (the `RDF::Enumerable` / `RDF::Queryable` / `RDF::Mutable`
+mixins, plus the `RDF::Reader` / `RDF::Writer` / `RDF::Format` registries). The slow parts
+are the *implementations*: the pure-Ruby in-memory store and the pure-Ruby SPARQL engine.
+
+rdf-oxigraph keeps the interfaces and replaces the implementations. Your code talks to the
+same rdf.rb objects (`RDF::Statement`, `RDF::Query::Solutions`, `RDF::Graph`); underneath,
+calls cross a thin tagged-tuple bridge into the native oxigraph engine.
+
+```mermaid
+flowchart TD
+    App["Your app<br/>(plain RDF.rb code)"]
+
+    subgraph rdfrb["rdf.rb (interfaces — unchanged)"]
+        Mixins["RDF::Enumerable / Queryable / Mutable"]
+        Registry["RDF::Reader / Writer / Format registry"]
+        Terms["RDF::Statement · Query::Solutions · Graph"]
+    end
+
+    subgraph gem["rdf-oxigraph (this gem, Ruby)"]
+        Repo["RDF::Oxigraph::Repository<br/>< RDF::Repository"]
+        RW["Oxigraph Reader / Writer / Format<br/>(turtle, trig, n-triples, n-quads, rdf/xml, json-ld)"]
+        Sparql["SPARQL.results + SPARQL::Client"]
+        Shacl["SHACL.validate → Report"]
+        Conv["Conversion<br/>(RDF.rb terms ⇄ tagged tuples)"]
+    end
+
+    subgraph native["native extension (Rust, via magnus + rb-sys)"]
+        Store["RDF::Oxigraph::Store"]
+        Oxi["oxigraph 0.5<br/>(in-memory store + SPARQL 1.1)"]
+        Rudof["rudof shacl crate"]
+    end
+
+    App --> Mixins
+    App --> Registry
+    App --> Terms
+
+    Mixins --> Repo
+    Registry --> RW
+    Repo --> Sparql
+    Repo --> Shacl
+    Repo --> Conv
+    RW --> Conv
+
+    Conv <--> Store
+    Sparql --> Store
+    Shacl --> Rudof
+    Store --> Oxi
+```
+
+The native boundary is deliberately narrow: terms are marshalled as small tagged tuples
+(e.g. `["uri", "..."]`, `["lit", value, datatype, lang]`), and SHACL crosses the boundary
+only as serialized RDF strings.
+
+## Usage
+
+### Do I have to use `RDF::Oxigraph::Repository`?
+
+**Yes — instantiating `RDF::Oxigraph::Repository` (or the lower-level
+`RDF::Oxigraph::Store`) is the one and only thing you change.** That object *is* the
+oxigraph-backed store; without it, your data lives in the stock pure-Ruby store and none of the
+native speedups apply. Everything else stays standard rdf.rb:
+
+```ruby
+require "rdf/oxigraph"
+
+repo = RDF::Oxigraph::Repository.new   # <-- the only oxigraph-specific line
+
+# ...from here on it's plain RDF.rb — identical to stock RDF::Repository:
+repo << RDF::Statement.new(subject, predicate, object)
+repo.query([nil, RDF.type, RDF::URI("http://example.org/Person")])
+repo.count
+```
+
+Two nuances:
+
+- **Readers/Writers register globally.** Once `rdf/oxigraph` is required, the oxigraph-backed
+  Turtle/TriG/N-Triples/N-Quads/RDF-XML/JSON-LD readers/writers are registered in rdf.rb's
+  format registry. `RDF::Reader.for(...)` / `RDF::Writer.for(...)` and `Repository#load` /
+  `#dump` then use the native parsers — no extra wiring.
+- **SPARQL needs the repository.** `repo.sparql(...)`, `repo.sparql_update(...)`, and the
+  `RDF::Oxigraph::SPARQL::Client` wrapper all run against the oxigraph store, so they require
+  the oxigraph repository.
+
+### Drop-in repository
+
+The same rdf.rb code runs unchanged against the stock store and the oxigraph store with
+identical results:
+
+```ruby
+require "rdf/oxigraph"
+
+EX = RDF::Vocabulary.new("http://example.org/")
+repo = RDF::Oxigraph::Repository.new
+repo << RDF::Statement.new(EX.alice, RDF.type, EX.Person)
+repo << RDF::Statement.new(EX.alice, EX.name, RDF::Literal("Alice"))
+
+repo.query([nil, RDF.type, EX.Person]).each { |s| puts s.subject }
+```
+
+### Load & serialize (native parse/serialize)
+
+```ruby
+repo = RDF::Oxigraph::Repository.new
+repo.load("data.ttl")            # native Turtle parse, straight into the store
+puts repo.dump(:ntriples)        # native serialization
+puts repo.dump(:jsonld)
+
+RDF::Reader.for(content_type: "text/turtle")  # => oxigraph-backed reader
+RDF::Writer.for(:ntriples)                    # => oxigraph-backed writer
+```
+
+### SPARQL query + update
+
+```ruby
+repo = RDF::Oxigraph::Repository.new
+repo.load("data.ttl")
+
+# SELECT -> RDF::Query::Solutions
+repo.sparql("SELECT ?s WHERE { ?s a <http://example.org/Book> }").each { |sol| puts sol[:s] }
+
+# ASK -> true/false ; CONSTRUCT/DESCRIBE -> RDF::Graph
+repo.sparql("ASK { ?s ?p ?o }")
+graph = repo.sparql("CONSTRUCT { ?a ?b ?c } WHERE { ?a ?b ?c }")
+
+# SPARQL 1.1 Update
+repo.sparql_update("INSERT DATA { <http://example.org/x> a <http://example.org/Book> }")
+
+# SPARQL::Client-shaped wrapper (string-based query/update)
+client = RDF::Oxigraph::SPARQL::Client.new(repo)
+client.query("SELECT (COUNT(?s) AS ?n) WHERE { ?s ?p ?o }")
+```
+
+### SHACL validation
+
+oxigraph itself has no SHACL; validation is provided in-process by the rudof
 [`shacl`](https://crates.io/crates/shacl) crate (native, no external service):
 
 ```ruby
-report = repo.shacl_validate(shapes_turtle_string)   # validate the repo's data
-report.conforms?   # => true / false
-report.violations  # => count
-report.results     # => [{ "focus" => ..., "severity" => ..., "message" => ..., "path" => ... }, ...]
-puts report.to_s   # human-readable report
+report = repo.shacl_validate(shapes_turtle_string)  # validate the repo's data
+report.conforms?    # => true / false
+report.violations   # => count
+report.results      # => [{ "focus" => ..., "severity" => ..., "message" => ..., "path" => ... }, ...]
+puts report.to_s    # human-readable report
 
-# or validate two strings directly:
+# or validate two RDF strings directly, no repository needed:
 RDF::Oxigraph::SHACL.validate(data: data_ttl, shapes: shapes_ttl)
 ```
 
-## Tests
+### Runnable examples
 
-Two suites:
+The [`examples/`](examples/) directory has self-contained scripts (shared dataset in
+`examples/data/books.ttl`). After `rake compile` (or installing the gem):
 
-- **Minitest** — the main suite (consistent with solis-core):
-  ```bash
-  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake test
-  ```
-- **RSpec** — runs only the `rdf-spec` conformance shared examples (which are RSpec-only):
-  ```bash
-  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake conformance
-  ```
+```bash
+ruby -Ilib examples/01_drop_in_repository.rb   # drop-in: same code, stock vs oxigraph
+ruby -Ilib examples/02_load_and_serialize.rb   # native load + serialize, format registry
+ruby -Ilib examples/03_sparql.rb               # SELECT/ASK/CONSTRUCT + UPDATE + client
+ruby -Ilib examples/04_shacl.rb                # SHACL validation
+```
 
-`rake test` is the default and is green; `rake conformance` has ~19 expected failures (below).
+(Drop the `-Ilib` once the gem is installed.)
 
 ## Conformance & known deviations
 
@@ -69,50 +230,112 @@ documented backend behavior:
 - **oxigraph canonicalizes typed literals.** `"01"^^xsd:integer` is stored as
   `"1"^^xsd:integer`, and `"1.0e0"^^xsd:double` as its canonical form. rdf-spec treats
   distinct lexical forms as distinct terms, so the lexical-preservation / term-count /
-  value-pattern tests fail. This is semantically reasonable (both denote the same value)
-  and is harmless — generally beneficial — for the solis use case.
-- `#dump` differs only in auto-assigned blank-node labels (triples are identical); full
-  `#dump` support arrives with the readers/writers in step 4.
+  value-pattern tests fail. This is semantically reasonable (both denote the same value) and
+  is harmless.
+- `#dump` differs only in auto-assigned blank-node labels (the triples are identical).
 
 These are inherent to oxigraph's value-based storage and are not fixable in the gem.
 
-## Installation
+## Tests
 
-```ruby
-gem "rdf-oxigraph"
-```
+Two suites:
 
-Precompiled, platform-specific gems are published so **no Rust toolchain is
-required to install**:
+- **Minitest** — the main suite and the default `rake` task:
 
-- `x86_64-linux`, `aarch64-linux` (glibc) and their `-musl` variants (Alpine, etc.)
-- `arm64-darwin`, `x86_64-darwin` (macOS Apple Silicon / Intel)
+  ```bash
+  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake test
+  ```
 
-The native extension uses oxigraph's **in-memory** store only (no RocksDB / no C++
-dependency), which keeps the gem small (~2.5 MB) and the Linux x86_64/arm64 + musl
-cross-builds reliable. On-disk persistence (`Store::open`) is intentionally not
-enabled; re-enable oxigraph's `rocksdb` feature in `ext/rdf_oxigraph/Cargo.toml` if
-you need it.
+- **RSpec** — runs only the `rdf-spec` conformance shared examples (which are RSpec-only):
 
-If no precompiled gem matches your platform, the gem falls back to compiling from
-source (requires a Rust toolchain — rustup recommended; Rust is well supported on
-Linux intel/arm).
+  ```bash
+  CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake conformance
+  ```
 
-Precompiled gems are produced by the `precompile` GitHub workflow
-(`oxidize-rb/actions/cross-gem`); CI runs Minitest + rdf-spec conformance across
-Ruby 3.1–3.4 on Linux and macOS.
+`rake test` is green; `rake conformance` has ~19 expected failures (see
+[Conformance & known deviations](#conformance--known-deviations)). Both tasks depend on
+`:compile`, so they rebuild the native extension first. Setting `CARGO_TARGET_DIR` keeps Rust
+build artifacts out of Dropbox/source control (optional but recommended).
 
-## Build (development)
+CI (`.github/workflows/ci.yml`) runs both suites across Ruby 3.1–3.4 on Linux and macOS.
+
+## Compile (development)
 
 ```bash
 bundle install
-# keep Rust build artifacts out of Dropbox:
+
+# Build the native extension into lib/rdf/oxigraph/:
 CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake compile
-ruby -Ilib -e 'require "rdf/oxigraph"; puts RDF::Oxigraph.probe("@prefix ex: <http://example.org/> . ex:a ex:b ex:c .", "ASK { ?s ?p ?o }")'
+
+# Smoke test:
+ruby -Ilib -e 'require "rdf/oxigraph"; \
+  r = RDF::Oxigraph::Repository.new; \
+  r.sparql_update("INSERT DATA { <http://ex/a> <http://ex/b> <http://ex/c> }"); \
+  puts r.sparql("ASK { ?s ?p ?o }")'
 ```
 
-Requirements: Ruby >= 3.0 with headers, a Rust toolchain (rustup recommended), clang/libclang.
+Requirements for compiling from source: Ruby >= 3.0 with headers, a Rust toolchain (rustup
+recommended), and clang/libclang.
+
+## Building & publishing the gem (Intel + ARM)
+
+The pure-Ruby `gem build` produces a source gem (Rust compiled at install time). To ship
+**precompiled, platform-specific** gems so users don't need Rust, build one gem per platform.
+
+### Recommended: GitHub Actions (all platforms)
+
+The [`precompile`](.github/workflows/precompile.yml) workflow uses
+[`oxidize-rb/actions/cross-gem`](https://github.com/oxidize-rb/actions) to cross-compile gems
+for every supported platform (Linux x86_64/arm64 glibc + musl, macOS arm64/x86_64) across Ruby
+3.1–3.4. It triggers on a version tag or manually:
+
+```bash
+# Tag a release -> the workflow builds every platform gem and uploads them as artifacts:
+git tag v0.0.1
+git push origin v0.0.1
+```
+
+Download the artifacts and push them:
+
+```bash
+gem push rdf-oxigraph-0.0.1-arm64-darwin.gem
+gem push rdf-oxigraph-0.0.1-x86_64-darwin.gem
+gem push rdf-oxigraph-0.0.1-x86_64-linux.gem
+gem push rdf-oxigraph-0.0.1-aarch64-linux.gem
+gem push rdf-oxigraph-0.0.1-x86_64-linux-musl.gem
+gem push rdf-oxigraph-0.0.1-aarch64-linux-musl.gem
+```
+
+> The gemspec sets `rubygems_mfa_required`, so `gem push` will prompt for your RubyGems OTP.
+
+### Local cross-compilation (Intel + ARM)
+
+`RbSys::ExtensionTask` (configured in the `Rakefile`) exposes `native` and cross-compile
+tasks. To build platform gems locally without per-platform machines, use
+[`rb-sys-dock`](https://github.com/oxidize-rb/rb-sys) (Docker-based cross-compilation):
+
+```bash
+# macOS — Apple Silicon (arm64) and Intel (x86_64):
+bundle exec rb-sys-dock --platform arm64-darwin   --build
+bundle exec rb-sys-dock --platform x86_64-darwin  --build
+
+# Linux — Intel + ARM (glibc and musl):
+bundle exec rb-sys-dock --platform x86_64-linux       --build
+bundle exec rb-sys-dock --platform aarch64-linux      --build
+bundle exec rb-sys-dock --platform x86_64-linux-musl  --build
+bundle exec rb-sys-dock --platform aarch64-linux-musl --build
+```
+
+Each build drops a `pkg/rdf-oxigraph-<version>-<platform>.gem`; push each with `gem push` as
+above.
+
+A native gem for **your current machine only** (no Docker) is just:
+
+```bash
+CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake native gem
+# => pkg/rdf-oxigraph-<version>-<your-platform>.gem
+```
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

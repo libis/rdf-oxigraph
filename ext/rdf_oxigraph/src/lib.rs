@@ -19,8 +19,8 @@ use magnus::{
     function, method, prelude::*, value::ReprValue, Error, RArray, RHash, Ruby, TryConvert, Value,
 };
 use oxigraph::io::{JsonLdProfileSet, RdfFormat, RdfParser, RdfSerializer};
-use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, Quad, Subject, Term};
-use oxigraph::sparql::QueryResults;
+use oxigraph::model::{BlankNode, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Term};
+use oxigraph::sparql::{QueryResults, SparqlEvaluator};
 use oxigraph::store::Store as OxiStore;
 
 // In-process SHACL via the rudof `shacl` crate. It uses its own RDF stack
@@ -77,7 +77,7 @@ fn ruby_to_term(val: Value) -> Result<Term, Error> {
     }
 }
 
-fn ruby_to_subject(val: Value) -> Result<Subject, Error> {
+fn ruby_to_subject(val: Value) -> Result<NamedOrBlankNode, Error> {
     match ruby_to_term(val)? {
         Term::NamedNode(n) => Ok(n.into()),
         Term::BlankNode(b) => Ok(b.into()),
@@ -129,11 +129,10 @@ fn term_to_ruby(ruby: &Ruby, t: &Term) -> Result<RArray, Error> {
     Ok(a)
 }
 
-fn subject_to_term(s: &Subject) -> Result<Term, Error> {
+fn subject_to_term(s: &NamedOrBlankNode) -> Result<Term, Error> {
     match s {
-        Subject::NamedNode(n) => Ok(Term::NamedNode(n.clone())),
-        Subject::BlankNode(b) => Ok(Term::BlankNode(b.clone())),
-        _ => Err(err("RDF-star subject terms are not supported")),
+        NamedOrBlankNode::NamedNode(n) => Ok(Term::NamedNode(n.clone())),
+        NamedOrBlankNode::BlankNode(b) => Ok(Term::BlankNode(b.clone())),
     }
 }
 
@@ -155,6 +154,7 @@ fn parse_format(format: &str) -> Result<RdfFormat, Error> {
         "jsonld" | "json" => RdfFormat::JsonLd {
             profile: JsonLdProfileSet::empty(),
         },
+        "n3" => RdfFormat::N3,
         other => return Err(err(format!("unknown RDF format {other:?}"))),
     })
 }
@@ -213,6 +213,7 @@ fn rudof_format(format: &str) -> Result<RudofFormat, Error> {
         "trig" => RudofFormat::TriG,
         "rdfxml" | "rdf" => RudofFormat::Rdfxml,
         "n3" => RudofFormat::N3,
+        "jsonld" | "json" => RudofFormat::JsonLd,
         other => return Err(err(format!("unknown RDF format {other:?}"))),
     })
 }
@@ -355,7 +356,13 @@ impl Store {
     fn query(&self, sparql: String) -> Result<RArray, Error> {
         let ruby = Ruby::get().map_err(err)?;
         let result = ruby.ary_new();
-        match self.0.query(&sparql).map_err(err)? {
+        let query_results = SparqlEvaluator::new()
+            .parse_query(&sparql)
+            .map_err(err)?
+            .on_store(&self.0)
+            .execute()
+            .map_err(err)?;
+        match query_results {
             QueryResults::Boolean(b) => {
                 result.push("boolean")?;
                 result.push(b)?;
