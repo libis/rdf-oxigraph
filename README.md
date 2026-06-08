@@ -310,24 +310,49 @@ gem push rdf-oxigraph-0.0.1-aarch64-linux-musl.gem
 
 ### Local cross-compilation (Intel + ARM)
 
-`RbSys::ExtensionTask` (configured in the `Rakefile`) exposes `native` and cross-compile
-tasks. To build platform gems locally without per-platform machines, use
-[`rb-sys-dock`](https://github.com/oxidize-rb/rb-sys) (Docker-based cross-compilation):
+Cross-compilation is Docker-based, via
+[`rb-sys-dock`](https://github.com/oxidize-rb/rb-sys) — no per-platform machines needed. It
+requires Docker (or Podman) running locally.
+
+#### Easiest: `rake build` (interactive)
+
+```bash
+bundle exec rake build
+```
+
+This wraps `rb-sys-dock` with a menu: it lists every supported target, builds the one you
+pick, and loops until you quit. It also handles the two footguns described below for you
+(corrects symlinked paths, pins Ruby to `~> 3.0`). Override the Ruby pin with
+`RUBY_VERSIONS=... bundle exec rake build` if you need to.
+
+#### Manual: `rb-sys-dock` per platform
 
 ```bash
 # macOS — Apple Silicon (arm64) and Intel (x86_64):
-bundle exec rb-sys-dock --platform arm64-darwin   --build
-bundle exec rb-sys-dock --platform x86_64-darwin  --build
+bundle exec rb-sys-dock --platform arm64-darwin   --ruby-versions "~> 3.0" --build
+bundle exec rb-sys-dock --platform x86_64-darwin  --ruby-versions "~> 3.0" --build
 
 # Linux — Intel + ARM (glibc and musl):
-bundle exec rb-sys-dock --platform x86_64-linux       --build
-bundle exec rb-sys-dock --platform aarch64-linux      --build
-bundle exec rb-sys-dock --platform x86_64-linux-musl  --build
-bundle exec rb-sys-dock --platform aarch64-linux-musl --build
+bundle exec rb-sys-dock --platform x86_64-linux       --ruby-versions "~> 3.0" --build
+bundle exec rb-sys-dock --platform aarch64-linux      --ruby-versions "~> 3.0" --build
+bundle exec rb-sys-dock --platform x86_64-linux-musl  --ruby-versions "~> 3.0" --build
+bundle exec rb-sys-dock --platform aarch64-linux-musl --ruby-versions "~> 3.0" --build
 ```
 
 Each build drops a `pkg/rdf-oxigraph-<version>-<platform>.gem`; push each with `gem push` as
 above.
+
+> **Two gotchas** (both handled automatically by `rake build`):
+>
+> - **Pin Ruby to `~> 3.0`.** The cross-compile image also ships a Ruby 4.0 target, but
+>   `magnus 0.7` cannot compile against it (`no field 'typed_flag' on type RTypedData`). The
+>   `--ruby-versions "~> 3.0"` flag builds for Ruby 3.0–3.4 and skips 4.0. (Plain `--build`
+>   targets every Ruby in the image and fails on 4.0.)
+> - **Don't launch from a symlinked path.** `rb-sys-dock` mounts the shell's `$(pwd)`
+>   (symlinks *not* resolved) but runs the container in the resolved path. If you reached the
+>   project through a symlink (e.g. `~/Sources -> …/Dropbox/AllSources`), the container's
+>   working dir ends up empty — surfacing as `No Rakefile found` or `Could not locate Gemfile`.
+>   `cd "$(pwd -P)"` first, or just use `rake build`.
 
 A native gem for **your current machine only** (no Docker) is just:
 
