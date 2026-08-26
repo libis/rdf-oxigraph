@@ -3,6 +3,7 @@ module RDF
     # Native-format strings keyed by RDF.rb format symbol.
     FORMATS = {
       turtle:   "turtle",
+      ttl:      "turtle",
       ntriples: "ntriples",
       nquads:   "nquads",
       trig:     "trig",

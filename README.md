@@ -1,4 +1,5 @@
 # rdf-oxigraph
+🤖 Claude (Anthropic) helped writing this library. 
 
 A Ruby gem providing a **drop-in [RDF.rb](https://github.com/ruby-rdf/rdf)-compatible**
 storage + SPARQL backend powered by the
