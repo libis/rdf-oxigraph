@@ -225,8 +225,9 @@ ruby -Ilib examples/04_shacl.rb                # SHACL validation
 ## Conformance & known deviations
 
 `RDF::Oxigraph::Repository` passes **319/338** of the official `rdf-spec` `RDF::Repository`
-shared examples (`rake conformance`). The remaining ~19 failures stem from a single,
-documented backend behavior:
+shared examples (`rake conformance`). The other 19 stem from a single, documented backend
+behavior, and are marked **pending** (see [spec/known_deviations.rb](spec/known_deviations.rb))
+so the suite runs green:
 
 - **oxigraph canonicalizes typed literals.** `"01"^^xsd:integer` is stored as
   `"1"^^xsd:integer`, and `"1.0e0"^^xsd:double` as its canonical form. rdf-spec treats
@@ -236,6 +237,17 @@ documented backend behavior:
 - `#dump` differs only in auto-assigned blank-node labels (the triples are identical).
 
 These are inherent to oxigraph's value-based storage and are not fixable in the gem.
+
+Marking them pending rather than ignoring the failures keeps the suite honest in both
+directions:
+
+- if a pending example ever **starts passing**, RSpec reports it as a failure
+  (`Expected pending ... to fail`) — delete the entry from `known_deviations.rb`;
+- if an entry stops matching because rdf-spec renamed the example, that example is no
+  longer marked pending and fails normally, and `spec_helper.rb` prints a warning naming
+  the stale entry.
+
+So a real regression still turns CI red — only these 19 documented deviations are excused.
 
 ## Tests
 
@@ -253,7 +265,8 @@ Two suites:
   CARGO_TARGET_DIR="$HOME/.cargo-target/rdf-oxigraph" bundle exec rake conformance
   ```
 
-`rake test` is green; `rake conformance` has ~19 expected failures (see
+Both are green: `rake conformance` reports `0 failures, 19 pending`, those 19 being the
+documented deviations (see
 [Conformance & known deviations](#conformance--known-deviations)). Both tasks depend on
 `:compile`, so they rebuild the native extension first. Setting `CARGO_TARGET_DIR` keeps Rust
 build artifacts out of Dropbox/source control (optional but recommended).
