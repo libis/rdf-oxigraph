@@ -2,6 +2,18 @@
 
 ## [Unreleased] (0.0.1)
 
+### Changed
+- Upgraded oxigraph 0.5.8 → **0.5.13** and the rudof `shacl` / `rudof_rdf` crates
+  0.3.3 → **0.3.39** (still a single shared oxigraph copy). rudof's
+  `validate()` now takes a `ShaclConfig`; we pass the default (all results kept),
+  so SHACL behaviour is unchanged.
+
+### Fixed
+- `require "rdf/oxigraph"` failed with a precompiled platform gem (e.g.
+  `0.0.1-arm64-darwin`): those ship the native extension per Ruby version in
+  `lib/rdf/oxigraph/<major.minor>/`, while the loader only looked in
+  `lib/rdf/oxigraph/` (where a source build puts it). It now tries both.
+
 Initial development release. A drop-in RDF.rb-compatible storage/SPARQL backend
 powered by the [oxigraph](https://github.com/oxigraph/oxigraph) Rust engine via a
 magnus + rb-sys native extension.

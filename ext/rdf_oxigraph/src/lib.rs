@@ -29,7 +29,7 @@ use rudof_rdf::rdf_core::RDFFormat as RudofFormat;
 use rudof_rdf::rdf_impl::{OxigraphInMemory, ReaderMode};
 use shacl::validator::processor::{GraphValidation, ShaclProcessor};
 use shacl::validator::store::{Graph as ShaclGraph, ShaclDataManager};
-use shacl::validator::ShaclValidationMode;
+use shacl::validator::{ShaclConfig, ShaclValidationMode};
 use std::io::Cursor;
 
 fn err<E: std::fmt::Display>(e: E) -> Error {
@@ -250,7 +250,7 @@ fn shacl_validate(
     let graph = ShaclGraph::try_from(data_graph).map_err(err)?;
     let mut validator = GraphValidation::new(graph);
     let report = validator
-        .validate(&schema, &ShaclValidationMode::Native)
+        .validate(&schema, &ShaclValidationMode::Native, &ShaclConfig::default())
         .map_err(err)?;
 
     let results = ruby.ary_new();
