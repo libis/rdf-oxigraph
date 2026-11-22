@@ -73,31 +73,34 @@ task :build do
 
     line = $stdin.gets
     break if line.nil? # Ctrl-D / EOF
-    sel = line.strip
-    break if sel.empty? || %w[q quit exit].include?(sel.downcase)
+    multi_sel = line.split(/,/).map(&:strip)
 
-    idx = Integer(sel, exception: false)
-    platform =
-      if idx && idx.between?(1, platforms.size)
-        platforms[idx - 1]
-      elsif platforms.include?(sel)
-        sel
+    break if multi_sel.empty? || multi_sel.map(&:downcase).include?('q')
+
+    multi_sel.each do |sel|
+      idx = Integer(sel, exception: false)
+      platform =
+        if idx && idx.between?(1, platforms.size)
+          platforms[idx - 1]
+        elsif platforms.include?(sel)
+          sel
+        end
+
+      unless platform
+        warn "  Invalid selection: #{sel.inspect}"
+        next
       end
 
-    unless platform
-      warn "  Invalid selection: #{sel.inspect}"
-      next
-    end
-
-    cmd = ["bundle", "exec", "rb-sys-dock",
-      "--platform", platform,
-      "--ruby-versions", ruby_versions,
-      "--build"]
-    puts "→ #{cmd.join(" ")}"
-    if system(*cmd)
-      puts "✓ Built #{platform} — see pkg/ for the gem."
-    else
-      puts "✗ Build failed for #{platform} (exit #{$?.exitstatus})."
+      cmd = ["bundle", "exec", "rb-sys-dock",
+        "--platform", platform,
+        "--ruby-versions", ruby_versions,
+        "--build"]
+      puts "\n\n\n→ #{cmd.join(" ")}"
+      if system(*cmd)
+        puts "✓ Built #{platform} — see pkg/ for the gem."
+      else
+        puts "✗ Build failed for #{platform} (exit #{$?.exitstatus})."
+      end
     end
   end
 
