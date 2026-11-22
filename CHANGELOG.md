@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] (0.0.1)
+## [0.0.2] - 2026-11-22
 
 ### Changed
 - Upgraded oxigraph 0.5.8 → **0.5.13** and the rudof `shacl` / `rudof_rdf` crates
@@ -13,6 +13,8 @@
   `0.0.1-arm64-darwin`): those ship the native extension per Ruby version in
   `lib/rdf/oxigraph/<major.minor>/`, while the loader only looked in
   `lib/rdf/oxigraph/` (where a source build puts it). It now tries both.
+
+## [0.0.1] - 2026-08-26
 
 Initial development release. A drop-in RDF.rb-compatible storage/SPARQL backend
 powered by the [oxigraph](https://github.com/oxigraph/oxigraph) Rust engine via a
