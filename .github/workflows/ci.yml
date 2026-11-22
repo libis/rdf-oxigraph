@@ -10,6 +10,12 @@ jobs:
   test:
     name: test (ruby ${{ matrix.ruby }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Ruby 3.2's ruby/internal/stdbool.h only includes <stdbool.h> when
+      # HAVE_STDBOOL_H is set; the ubuntu-26.04 toolcache Ruby 3.2 lacks it, so
+      # rb-sys' bindgen fails with "unknown type name 'bool'". Force-including it
+      # is a no-op everywhere else (Ruby >= 3.3 includes it unconditionally).
+      BINDGEN_EXTRA_CLANG_ARGS: "-include stdbool.h"
     strategy:
       fail-fast: false
       matrix:
